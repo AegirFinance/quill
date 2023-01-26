@@ -1,6 +1,8 @@
 #![warn(unused_extern_crates)]
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use ic_agent::export::Principal;
 use crate::lib::AnyhowResult;
 use anyhow::Context;
 use bip39::Mnemonic;
@@ -40,6 +42,10 @@ struct GlobalOpts {
     #[clap(long)]
     seed_file: Option<PathBuf>,
 
+    /// ID of the signing canister id
+    #[clap(long)]
+    canister_id: Option<Principal>,
+
     /// Output the result(s) as UTF-8 QR codes.
     #[clap(long)]
     qr: bool,
@@ -75,9 +81,9 @@ fn main() {
     }
 }
 
-fn get_auth(opts: GlobalOpts) -> AnyhowResult<AuthInfo> {
+fn get_auth(opts: GlobalOpts, handle: tokio::runtime::Handle) -> AnyhowResult<AuthInfo> {
     // Get PEM from the file if provided, or try to convert from the seed file
-    if opts.hsm {
+    let id = if opts.hsm {
         let mut hsm = lib::HSMInfo::new();
         if let Some(path) = opts.hsm_libpath {
             hsm.libpath = path;
@@ -88,15 +94,25 @@ fn get_auth(opts: GlobalOpts) -> AnyhowResult<AuthInfo> {
         if let Some(id) = opts.hsm_id {
             hsm.ident = id;
         }
-        Ok(lib::AuthInfo::NitroHsm(hsm))
+        lib::AuthInfo::NitroHsm(hsm)
     } else {
         let pem = read_pem(opts.pem_file.as_deref(), opts.seed_file.as_deref())?;
         if let Some(pem) = pem {
-            Ok(lib::AuthInfo::PemFile(pem))
+            lib::AuthInfo::PemFile(pem)
         } else {
-            Ok(lib::AuthInfo::NoAuth)
+            lib::AuthInfo::NoAuth
         }
+    };
+    if let Some(canister) = opts.canister_id {
+        // Wrap this in a canister-signer
+        return Ok(lib::AuthInfo::Canister(lib::CanisterInfo {
+            canister,
+            identity: Arc::from(lib::get_identity(&id)?),
+            fetch_root_key: opts.fetch_root_key,
+            handle,
+        }))
     }
+    Ok(id)
 }
 
 // Get PEM from the file if provided, or try to convert from the seed file

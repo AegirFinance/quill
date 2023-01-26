@@ -1,5 +1,6 @@
 //! All the common functionality.
 
+use crate::lib::canister_identity::CanisterIdentity;
 use anyhow::{anyhow, bail, Context};
 use bip39::Mnemonic;
 use candid::{
@@ -24,7 +25,7 @@ use simple_asn1::ASN1Block::{
 };
 use simple_asn1::{oid, to_der, ASN1Class, BigInt, BigUint};
 use std::path::PathBuf;
-use std::{env::VarError, path::Path};
+use std::{env::VarError, path::Path, sync::Arc};
 
 pub const IC_URL: &str = "https://ic0.app";
 
@@ -36,6 +37,7 @@ pub fn get_ic_url() -> String {
     std::env::var("IC_URL").unwrap_or_else(|_| IC_URL.to_string())
 }
 
+pub mod canister_identity;
 pub mod signing;
 
 pub type AnyhowResult<T = ()> = anyhow::Result<T>;
@@ -69,11 +71,20 @@ impl HSMInfo {
 }
 
 #[derive(Debug)]
+pub struct CanisterInfo {
+    pub canister: Principal,
+    pub identity: Arc<dyn Identity>,
+    pub fetch_root_key: bool,
+    pub handle: tokio::runtime::Handle,
+}
+
+#[derive(Debug)]
 pub enum AuthInfo {
     NoAuth, // No authentication details were provided;
     // only unsigned queries are allowed.
     PemFile(String), // --private-pem file specified
     NitroHsm(HSMInfo),
+    Canister(CanisterInfo),
 }
 
 pub fn ledger_canister_id() -> Principal {
@@ -238,6 +249,12 @@ pub fn get_identity(auth: &AuthInfo) -> AnyhowResult<Box<dyn Identity>> {
                 .context("Unable to use your hardware key")?;
             Ok(Box::new(identity) as _)
         }
+        AuthInfo::Canister(info) => Ok(Box::new(CanisterIdentity::new(
+            info.canister,
+            info.identity.clone(),
+            info.fetch_root_key,
+            info.handle.clone(),
+        ))),
     }
 }
 

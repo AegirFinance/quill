@@ -15,7 +15,9 @@ bip39 = "1.0.1"
 bip32 = "0.4.0"
 candid = "0.8.2"
 clap = { version = "3.1.18", features = ["derive", "cargo"] }
+crossbeam = "0.8.2"
 flate2 = "1.0.22"
+garcon = "0.2.3"
 hex = {version = "0.4.2", features = ["serde"] }
 ic-agent = "0.21.0"
 ic-identity-hsm = "0.21.0"

@@ -58,31 +58,32 @@ pub struct Empty;
 
 pub fn dispatch(cmd: Command) -> AnyhowResult {
     let runtime = Runtime::new().expect("Unable to create a runtime");
+    let handle = runtime.handle().clone();
     match cmd {
-        Command::PublicIds(opts) => public::exec(&get_auth(opts.global_opts)?, opts.command_opts)?,
+        Command::PublicIds(opts) => public::exec(&get_auth(opts.global_opts, handle)?, opts.command_opts)?,
         Command::Transfer(opts) => {
             let qr = opts.global_opts.qr;
-            let out = transfer::exec(&get_auth(opts.global_opts)?, opts.command_opts)?;
+            let out = transfer::exec(&get_auth(opts.global_opts, handle)?, opts.command_opts)?;
             print_vec(qr, &out)?;
         }
         Command::NeuronStake(opts) => {
             let qr = opts.global_opts.qr;
-            let out = neuron_stake::exec(&get_auth(opts.global_opts)?, opts.command_opts)?;
+            let out = neuron_stake::exec(&get_auth(opts.global_opts, handle)?, opts.command_opts)?;
             print_vec(qr, &out)?;
         }
         Command::NeuronManage(opts) => {
             let qr = opts.global_opts.qr;
-            let out = neuron_manage::exec(&get_auth(opts.global_opts)?, opts.command_opts)?;
+            let out = neuron_manage::exec(&get_auth(opts.global_opts, handle)?, opts.command_opts)?;
             print_vec(qr, &out)?;
         }
         Command::ListNeurons(opts) => {
             let qr = opts.global_opts.qr;
-            let out = list_neurons::exec(&get_auth(opts.global_opts)?, opts.command_opts)?;
+            let out = list_neurons::exec(&get_auth(opts.global_opts, handle)?, opts.command_opts)?;
             print_vec(qr, &out)?;
         }
         Command::ClaimNeurons(opts) => {
             let qr = opts.global_opts.qr;
-            claim_neurons::exec(&get_auth(opts.global_opts)?)
+            claim_neurons::exec(&get_auth(opts.global_opts, handle)?)
                 .and_then(|out| print_vec(qr, &out))?;
         }
         Command::ListProposals(opts) => runtime.block_on(async {
@@ -98,12 +99,12 @@ pub fn dispatch(cmd: Command) -> AnyhowResult {
             account_balance::exec(opts.command_opts, opts.global_opts.fetch_root_key).await
         })?,
         Command::UpdateNodeProvider(opts) => {
-            let out = update_node_provider::exec(&get_auth(opts.global_opts)?, opts.command_opts)?;
+            let out = update_node_provider::exec(&get_auth(opts.global_opts, handle)?, opts.command_opts)?;
             print(&out)?;
         }
         Command::ReplaceNodeProviderId(opts) => {
             let out =
-                replace_node_provide_id::exec(&get_auth(opts.global_opts)?, opts.command_opts)?;
+                replace_node_provide_id::exec(&get_auth(opts.global_opts, handle)?, opts.command_opts)?;
             print(&out)?;
         }
         Command::Send(opts) => runtime.block_on(async {
