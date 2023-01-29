@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use garcon::TimeoutWaiter;
 use tokio::runtime::Handle;
 use crossbeam::channel;
+use std::convert::TryInto;
 use std::sync::Arc;
+use k256::sha2::{Sha256, Digest};
 
 #[derive(CandidType, Deserialize, Debug)]
 struct PublicKeyArgument {
@@ -17,11 +19,6 @@ struct PublicKeyArgument {
 #[derive(CandidType, Deserialize, Debug)]
 struct PublicKeyReply {
     pub public_key: Vec<u8>,
-}
-
-#[derive(CandidType, Serialize, Debug)]
-struct SignArgument {
-  message: Option<Vec<u8>>,
 }
 
 #[derive(CandidType, Deserialize, Debug)]
@@ -75,8 +72,12 @@ impl Identity for CanisterIdentity {
         let identity = self.identity.clone();
         let canister = self.canister.clone();
         let fetch_root_key = self.fetch_root_key.clone();
-        let message = Some(blob.to_vec());
-        let arg = Encode!(&SignArgument { message }).map_err(|e| format!("{e}"))?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(blob);
+        let message: [u8; 32] = hasher.finalize().as_slice().try_into().unwrap();
+
+        let arg = Encode!(&message).unwrap();
         self.handle.spawn(async move {
             eprintln!("getting agent");
             let agent = get_agent_async(identity, fetch_root_key).await;
@@ -96,10 +97,10 @@ impl Identity for CanisterIdentity {
         let r = rx.recv();
         eprintln!("sign response: {r:?}");
         let response = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
-        let result = Decode!(response.as_slice(), Result<SignatureReply, String>).map_err(|e| format!("{e}"))?;
+        let result = Decode!(response.as_slice(), Result<SignatureReply, String>).unwrap()?;
         Ok(Signature {
             public_key: Some(self.sender()?.as_slice().to_vec()),
-            signature: Some(result?.signature),
+            signature: Some(result.signature),
         })
     }
 }
