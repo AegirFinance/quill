@@ -45,20 +45,16 @@ impl CanisterIdentity {
 
 impl Identity for CanisterIdentity {
     fn sender(&self) -> Result<Principal, String> {
-        eprintln!("canister_identity.sender()");
         let (tx, rx) = channel::bounded(1);
         let identity = self.identity.clone();
         let canister = self.canister.clone();
         let fetch_root_key = self.fetch_root_key.clone();
         let arg = Encode!(&PublicKeyArgument { }).map_err(|e| format!("{e}"))?;
         self.handle.spawn(async move {
-            eprintln!("getting agent");
             let agent = get_agent_async(identity, fetch_root_key).await;
-            eprintln!("got agent");
             let _ = tx.send(match agent {
                 Err(e) => Err(e),
                 Ok(agent) => {
-                    eprintln!("getting public_key");
                     agent.update(&canister, "public_key")
                         .with_arg(&arg)
                         .call_and_wait(TimeoutWaiter::new(std::time::Duration::from_secs(60 * 5)))
@@ -68,11 +64,9 @@ impl Identity for CanisterIdentity {
             });
         });
         let r = rx.recv();
-        eprintln!("public_key response: {r:?}");
         let response = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
         let result = Decode!(response.as_slice(), Result<PublicKeyReply, String>).map_err(|e| format!("{e}"))?;
-        let p = Principal::try_from_slice(&result?.public_key).map_err(|e| format!("{e}"))?;
-        Ok(p)
+        Ok(Principal::self_authenticating(&result?.public_key))
     }
 
     fn sign(&self, blob: &[u8]) -> Result<Signature, String> {
