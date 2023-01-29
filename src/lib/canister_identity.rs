@@ -11,6 +11,10 @@ use crossbeam::channel;
 use std::sync::Arc;
 
 #[derive(CandidType, Deserialize, Debug)]
+struct PublicKeyArgument {
+}
+
+#[derive(CandidType, Deserialize, Debug)]
 struct PublicKeyReply {
     pub public_key: Vec<u8>,
 }
@@ -46,6 +50,7 @@ impl Identity for CanisterIdentity {
         let identity = self.identity.clone();
         let canister = self.canister.clone();
         let fetch_root_key = self.fetch_root_key.clone();
+        let arg = Encode!(&PublicKeyArgument { }).map_err(|e| format!("{e}"))?;
         self.handle.spawn(async move {
             eprintln!("getting agent");
             let agent = get_agent_async(identity, fetch_root_key).await;
@@ -55,6 +60,7 @@ impl Identity for CanisterIdentity {
                 Ok(agent) => {
                     eprintln!("getting public_key");
                     agent.update(&canister, "public_key")
+                        .with_arg(&arg)
                         .call_and_wait(TimeoutWaiter::new(std::time::Duration::from_secs(60 * 5)))
                         .await
                         .map_err(|err| anyhow!(err))
@@ -64,8 +70,8 @@ impl Identity for CanisterIdentity {
         let r = rx.recv();
         eprintln!("public_key response: {r:?}");
         let response = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
-        let result = Decode!(response.as_slice(), PublicKeyReply).map_err(|e| format!("{e}"))?;
-        let p = Principal::try_from_slice(&result.public_key).map_err(|e| format!("{e}"))?;
+        let result = Decode!(response.as_slice(), Result<PublicKeyReply, String>).map_err(|e| format!("{e}"))?;
+        let p = Principal::try_from_slice(&result?.public_key).map_err(|e| format!("{e}"))?;
         Ok(p)
     }
 
@@ -96,10 +102,10 @@ impl Identity for CanisterIdentity {
         let r = rx.recv();
         eprintln!("sign response: {r:?}");
         let response = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
-        let result = Decode!(response.as_slice(), SignatureReply).map_err(|e| format!("{e}"))?;
+        let result = Decode!(response.as_slice(), Result<SignatureReply, String>).map_err(|e| format!("{e}"))?;
         Ok(Signature {
             public_key: Some(self.sender()?.as_slice().to_vec()),
-            signature: Some(result.signature),
+            signature: Some(result?.signature),
         })
     }
 }
