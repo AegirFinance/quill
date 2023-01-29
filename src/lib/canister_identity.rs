@@ -1,10 +1,9 @@
 use anyhow::anyhow;
 use ic_agent::{
     export::Principal,
-    identity::AnonymousIdentity,
     Agent, Identity, Signature,
 };
-use candid::{Encode, Decode, CandidType, Nat};
+use candid::{Encode, Decode, CandidType};
 use serde::{Deserialize, Serialize};
 use garcon::TimeoutWaiter;
 use tokio::runtime::Handle;
@@ -42,9 +41,9 @@ impl CanisterIdentity {
 
 impl Identity for CanisterIdentity {
     fn sender(&self) -> Result<Principal, String> {
+        eprintln!("canister_identity.sender()");
         let (tx, rx) = channel::bounded(1);
-        // Must use anonymous here to prevent an infinite loop
-        let identity = Arc::new(AnonymousIdentity);
+        let identity = self.identity.clone();
         let canister = self.canister.clone();
         let fetch_root_key = self.fetch_root_key.clone();
         self.handle.spawn(async move {
@@ -55,7 +54,7 @@ impl Identity for CanisterIdentity {
                 Err(e) => Err(e),
                 Ok(agent) => {
                     eprintln!("getting public_key");
-                     agent.update(&canister, "public_key")
+                    agent.update(&canister, "public_key")
                         .call_and_wait(TimeoutWaiter::new(std::time::Duration::from_secs(60 * 5)))
                         .await
                         .map_err(|err| anyhow!(err))
@@ -71,6 +70,7 @@ impl Identity for CanisterIdentity {
     }
 
     fn sign(&self, blob: &[u8]) -> Result<Signature, String> {
+        eprintln!("canister_identity.sign({})", hex::encode(&blob));
         let (tx, rx) = channel::bounded(1);
         let identity = self.identity.clone();
         let canister = self.canister.clone();
@@ -85,7 +85,7 @@ impl Identity for CanisterIdentity {
                 Err(e) => Err(e),
                 Ok(agent) => {
                     eprintln!("getting signature");
-                     agent.update(&canister, "sign")
+                    agent.update(&canister, "sign")
                         .with_arg(&arg)
                         .call_and_wait(TimeoutWaiter::new(std::time::Duration::from_secs(60 * 5)))
                         .await
@@ -94,7 +94,7 @@ impl Identity for CanisterIdentity {
             });
         });
         let r = rx.recv();
-        eprintln!("public_key response: {r:?}");
+        eprintln!("sign response: {r:?}");
         let response = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
         let result = Decode!(response.as_slice(), SignatureReply).map_err(|e| format!("{e}"))?;
         Ok(Signature {
