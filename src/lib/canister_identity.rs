@@ -10,7 +10,12 @@ use tokio::runtime::Handle;
 use crossbeam::channel;
 use std::convert::TryInto;
 use std::sync::Arc;
-use k256::sha2::{Sha256, Digest};
+use k256::{
+    ecdsa::{self, signature::Signer, SigningKey, VerifyingKey},
+    pkcs8::{Document, EncodePublicKey},
+    sha2::{Sha256, Digest},
+    PublicKey,
+};
 
 #[derive(CandidType, Deserialize, Debug)]
 struct PublicKeyArgument {
@@ -72,15 +77,16 @@ impl CanisterIdentity {
     fn public_key(&self) -> Result<Vec<u8>, String> {
         let result: PublicKeyReply = self.canister_update("public_key", &PublicKeyArgument { })?;
         assert!(result.public_key.len() == 33, "malformed public_key, len: {}, expected 33", result.public_key.len());
-        Ok(result.public_key)
+        let verifying_key = VerifyingKey::from_sec1_bytes(&result.public_key).map_err(|e| format!("{e}"))?;
+        let public_key: PublicKey = verifying_key.into();
+        let key_der = public_key.to_public_key_der().map_err(|e| format!("{e}"))?;
+        Ok(key_der.as_bytes().to_vec())
     }
 }
 
 impl Identity for CanisterIdentity {
     fn sender(&self) -> Result<Principal, String> {
-        let public_key = self.public_key()?;
-        eprintln!("public key: {}", hex::encode(&public_key));
-        Ok(Principal::self_authenticating(&public_key))
+        Ok(Principal::self_authenticating(self.public_key()?))
     }
 
     fn sign(&self, blob: &[u8]) -> Result<Signature, String> {
@@ -88,11 +94,8 @@ impl Identity for CanisterIdentity {
         hasher.update(blob);
         let message: [u8; 32] = hasher.finalize().as_slice().try_into().unwrap();
         let result: SignatureReply = self.canister_update("sign", &message)?;
-        // TODO: We need a public key here not a principal
-        let public_key = self.public_key()?;
-        eprintln!("signature public key: {}", hex::encode(&public_key));
         Ok(Signature {
-            public_key: Some(public_key),
+            public_key: Some(self.public_key()?),
             signature: Some(result.signature),
         })
     }
