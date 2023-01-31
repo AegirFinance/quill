@@ -4,7 +4,7 @@ use ic_agent::{
     Agent, Identity, Signature,
 };
 use candid::{Encode, Decode, CandidType};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, de::DeserializeOwned, Serialize};
 use garcon::TimeoutWaiter;
 use tokio::runtime::Handle;
 use crossbeam::channel;
@@ -38,63 +38,55 @@ impl CanisterIdentity {
     pub fn new(canister: Principal, identity: Arc<dyn Identity>, fetch_root_key: bool, handle: Handle) -> Self {
         Self { canister, identity, fetch_root_key, handle }
     }
+
+    pub fn canister_update<A, R>(&self, method_name: &str, arg: &A) -> Result<R, String>
+        where
+            A: CandidType,
+            R: CandidType + DeserializeOwned
+    {
+        let (tx, rx) = channel::bounded(1);
+        let identity = self.identity.clone();
+        let canister = self.canister.clone();
+        let fetch_root_key = self.fetch_root_key.clone();
+        let arg_bytes = Encode!(&arg).map_err(|e| format!("{e}"))?;
+        let method = method_name.to_string();
+        self.handle.spawn(async move {
+            let agent = get_agent_async(identity, fetch_root_key).await;
+            let _ = tx.send(match agent {
+                Err(e) => Err(e),
+                Ok(agent) => {
+                    agent.update(&canister, method)
+                        .with_arg(&arg_bytes)
+                        .call_and_wait(TimeoutWaiter::new(std::time::Duration::from_secs(60 * 5)))
+                        .await
+                        .map_err(|err| anyhow!(err))
+                }
+            });
+        });
+        let r = rx.recv();
+        let bytes = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
+        let result = Decode!(&bytes, Result<R, String>).map_err(|e| format!("{e}"))?;
+        return Ok(result?);
+    }
+
 }
 
 impl Identity for CanisterIdentity {
     fn sender(&self) -> Result<Principal, String> {
-        let (tx, rx) = channel::bounded(1);
-        let identity = self.identity.clone();
-        let canister = self.canister.clone();
-        let fetch_root_key = self.fetch_root_key.clone();
-        let arg = Encode!(&PublicKeyArgument { }).map_err(|e| format!("{e}"))?;
-        self.handle.spawn(async move {
-            let agent = get_agent_async(identity, fetch_root_key).await;
-            let _ = tx.send(match agent {
-                Err(e) => Err(e),
-                Ok(agent) => {
-                    agent.update(&canister, "public_key")
-                        .with_arg(&arg)
-                        .call_and_wait(TimeoutWaiter::new(std::time::Duration::from_secs(60 * 5)))
-                        .await
-                        .map_err(|err| anyhow!(err))
-                }
-            });
-        });
-        let r = rx.recv();
-        let response = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
-        let result = Decode!(response.as_slice(), Result<PublicKeyReply, String>).map_err(|e| format!("{e}"))??;
-        Ok(Principal::self_authenticating(&result.public_key))
+        let result: PublicKeyReply = self.canister_update("public_key", &PublicKeyArgument { })?;
+        let principal = Principal::self_authenticating(&result.public_key);
+        Ok(principal)
     }
 
     fn sign(&self, blob: &[u8]) -> Result<Signature, String> {
-        let (tx, rx) = channel::bounded(1);
-        let identity = self.identity.clone();
-        let canister = self.canister.clone();
-        let fetch_root_key = self.fetch_root_key.clone();
-
         let mut hasher = Sha256::new();
         hasher.update(blob);
         let message: [u8; 32] = hasher.finalize().as_slice().try_into().unwrap();
-
-        let arg = Encode!(&message).unwrap();
-        self.handle.spawn(async move {
-            let agent = get_agent_async(identity, fetch_root_key).await;
-            let _ = tx.send(match agent {
-                Err(e) => Err(e),
-                Ok(agent) => {
-                    agent.update(&canister, "sign")
-                        .with_arg(&arg)
-                        .call_and_wait(TimeoutWaiter::new(std::time::Duration::from_secs(60 * 5)))
-                        .await
-                        .map_err(|err| anyhow!(err))
-                }
-            });
-        });
-        let r = rx.recv();
-        let response = r.map_err(|e| format!("{e}"))?.map_err(|e| format!("{e}"))?;
-        let result = Decode!(response.as_slice(), Result<SignatureReply, String>).unwrap()?;
+        let result: SignatureReply = self.canister_update("sign", &message)?;
+        // TODO: We need a public key here not a principal
+        let public_key = self.sender()?.as_slice().to_vec();
         Ok(Signature {
-            public_key: Some(self.sender()?.as_slice().to_vec()),
+            public_key: Some(public_key),
             signature: Some(result.signature),
         })
     }
